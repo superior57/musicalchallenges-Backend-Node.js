@@ -1,0 +1,298 @@
+'use strict';
+var mongoose = require("mongoose");
+var async = require("async");
+var config = require('../config');
+var mongoPaginate = require("mongoose-pagination");
+var mongooseAggregatePaginate = require('mongoose-aggregate-paginate');
+var mongo = require('mongodb');
+var ObjectID = mongo.ObjectID;
+//var BlockUserModels = require('../models/blockUser');
+var FeedModels = require('../models/feed');
+// Export your module
+var LikeModels = mongoose.model("Like", function () {
+
+    var s = new mongoose.Schema({
+        _id: {
+            type: String,
+            required: true
+        },
+        feed_id: {
+            type: String,
+            required: true
+        },
+        user_id: {
+            type: String,
+            required: true
+        },
+        like_type: {
+            type: Number              
+        },        
+        modifyDate :{
+            type : Date
+        }
+        }, {
+            timestamps: true
+          });
+    
+       s.plugin(mongooseAggregatePaginate);
+
+    s.statics.feedLike = function(feedData , callback){
+           console.log(feedData);
+           if(feedData.likeState === 1){
+               LikeModels.findOne({
+                   feed_id : feedData.postId,
+                   user_id : feedData.userId
+               } , function(err , res){
+               // console.log(err);
+                //console.log(res);
+                   if(err){
+                        callback({
+                            "response_code": 5005,
+                            "response_message": "INTERNAL DB ERROR",
+                            "response_data": {}
+                        })
+                   }
+                   else if(res === null){
+                        new LikeModels({
+                            _id : new ObjectID,
+                            feed_id : feedData.postId,
+                            user_id : feedData.userId,
+                            like_type : feedData.likeState,
+                            modifyDate : new Date()
+                        }).save(function(err , data){
+                            if(err){
+                                callback({
+                                    "response_code": 5005,
+                                    "response_message": "INTERNAL DB ERROR",
+                                    "response_data": {}
+                                })
+                            }
+                            else{
+                                callback({
+                                    "response_code": 2000,
+                                    "response_message": "You liked this post.",
+                                    "response_data": "incSupportCount"
+                                })
+                                // FeedModels.incSupportCount(feedData , function(result){
+                                //     //console.log(result);
+                                //     if (result.response_code === 2000) {
+                                //         callback({
+                                //             "response_code": 2000,
+                                //             "response_message": "You are supporting this post.",
+                                //             "response_data": {}
+                                //         }) 
+                                //     }
+                                //     else if (result.response_code === 5005) {
+                                //         callback({
+                                //             "response_code": 5005,
+                                //             "response_message": "INTERNAL DB ERROR",
+                                //             "response_data": {}
+                                //         })
+                                //     }
+                                // });
+                            }
+                        })
+                   }
+                   else if(res !== null){
+                        LikeModels.update({
+                            feed_id : feedData.postId,
+                            user_id : feedData.userId 
+                        },
+                        {
+                            $set:
+                            {
+                                like_type : feedData.likeState,
+                                modifyDate : new Date()
+                            }
+                        } , function(err , resData){
+                            if(err){
+                                callback({
+                                    "response_code": 5005,
+                                    "response_message": "INTERNAL DB ERROR",
+                                    "response_data": {}
+                                })
+                            }
+                            else{
+                                callback({
+                                    "response_code": 2000,
+                                    "response_message": "You are supporting this post.",
+                                    "response_data": "incSupportPost"
+                                })
+                                // FeedModels.incSupportControl(feedData, function(result){
+                                //     if (result.response_code === 2000) {
+                                //         callback({
+                                //             "response_code": 2000,
+                                //             "response_message": "You are supporting this post.",
+                                //             "response_data": {}
+                                //         }) 
+                                //     }
+                                //     else if (result.response_code === 5005) {
+                                //         callback({
+                                //             "response_code": 5005,
+                                //             "response_message": "INTERNAL DB ERROR",
+                                //             "response_data": {}
+                                //         })
+                                //     }
+                                // });
+                            }
+                        })
+                   }
+               })
+           }
+           else if(feedData.likeState === 0){
+                console.log(feedData);
+                LikeModels.findOne({
+                    feed_id : feedData.postId,
+                    user_id : feedData.userId
+                } , function(err , res){
+                       console.log(res);
+                       if(err){
+                            callback({
+                                "response_code": 5005,
+                                "response_message": "INTERNAL DB ERROR",
+                                "response_data": {}
+                            })
+                       }
+                       else if(res.like_type === 1){
+                            LikeModels.remove({
+                                feed_id : feedData.postId,
+                                user_id : feedData.userId  
+                            } , function(err , resData){
+                                if(err){
+                                    callBack({
+                                        "response_code": 5005,
+                                        "response_message": "INTERNAL DB ERROR",
+                                        "response_data": {}
+                                    })   
+                                }
+                                else{
+                                    callback({
+                                        "response_code": 2000,
+                                        "response_message": "You are unsupporting this post.",
+                                        "response_data": "incUnsupportPost"
+                                    })
+                                    
+                                }
+                            })
+                       }
+                       
+                   })
+           }else{
+                callback({
+                            "response_code": 5005,
+                            "response_message": "INTERNAL DB ERROR",
+                            "response_data": feedData
+                        })
+           }
+    }
+    s.statics.supportList = function(blockData , feedData , callback){
+            blockData.pop(feedData.userId);
+            var response_data = {}
+            var support_data = [];
+            var aggregate = LikeModels.aggregate([
+                {
+                  $match:
+                   {
+                       $and:[
+                             {feed_id: feedData.postId},
+                             {user_id: {$nin: blockData}}
+                       ]
+                   } 
+                },{
+                    $sort:{createdAt : 1}
+                },{
+                  $lookup:
+                    {
+                      from: "users",
+                      localField: "user_id",
+                      foreignField: "_id",
+                      as: "inventory_docs"
+                    }
+               },
+               {
+                   $unwind: "$inventory_docs"
+                   
+               },
+               {
+                    $project:{
+                        supportId:"$_id",
+                        userId:"$inventory_docs._id", 
+                        userName:"$inventory_docs.name",
+                        supportType:"$like_type",
+                        userProfileImage:
+                           {$cond: { if: {$and:[{$eq:["$inventory_docs.image_url",""]},{$eq:["$inventory_docs.user_type","Normal"]}]}, 
+                        then: "inventory_docs.$image_url", else: {$cond: { if: {$and:[{$ne:["$inventory_docs.image_url",""]},
+                                        {$eq:["$inventory_docs.user_type","Normal"]}]}, 
+                        then: {$concat: [config.liveUrl, "" , config.profilepicPath , "", "$inventory_docs.image_url" ]} , else: "$inventory_docs.image_url"
+                           }}
+                           }},
+                        dateTime:"$modifyDate"
+                    }
+               }
+            ])
+            var options = { page : feedData.page, limit : 10};
+            LikeModels.aggregatePaginate(aggregate, options, function(err, results, pageCount, count) {
+              if(err) 
+              {
+                console.err(err)
+              }
+              else
+              { 
+                console.log(results);
+                if(results.length == 0){
+                    callback({
+                        "response_code":5002,
+                        "response_message":"No one has supported yet.",
+                        "response_data":
+                            {
+                                "support_data":[]
+                            }
+                    })
+                }
+                else{
+                    support_data.push(results);
+                    response_data.support_data = support_data;
+                    callback({
+                        "response_code": 2000, 
+                        "response_message": "Support list is showing.",
+                        "response_data": response_data
+                    })
+                }
+              }
+            })
+    }
+    s.statics.supported = function(feedData , userId , callback){
+        //console.log(feedData);
+        LikeModels.findOne({
+            feed_id: feedData._id,
+            user_id: userId 
+        } , function(err , supportData){
+                if(err){
+                    callback({
+                        "response_code": 5005,
+                        "response_message": "INTERNAL DB ERROR",
+                        "response_data": {}
+                    })
+                }
+                else if(supportData === null){
+                    callback({
+                        "response_code": 2002,
+                        "response_message": "",
+                        "response_data": {}
+                    })
+                }
+                else if(supportData !== null){
+                    callback({
+                        "response_code": 2000,
+                        "response_message": "",
+                        "response_data": supportData
+                    })
+                }
+            });
+    }
+
+
+
+    return s;
+}());
+module.exports = LikeModels;

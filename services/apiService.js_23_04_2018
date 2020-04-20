@@ -1,0 +1,1576 @@
+'use strict';
+var express = require("express");
+var config = require('../config');
+var async = require("async");
+var mongo = require('mongodb');
+var crypto = require('crypto');
+var sha1 = require('node-sha1');
+var fs = require('fs');
+var util = require('util');
+var logger = require('morgan'); 
+var CronJob = require('cron').CronJob;
+var mailProperty = require('../modules/sendMail');
+var ObjectID = mongo.ObjectID;
+var baseUrl = config.baseUrl;
+var AWS = require('aws-sdk');
+AWS.config.update({region: 'us-east-2',accessKeyId: 'AKIAJXV4XBAIY453GUMA',secretAccessKey: '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'});
+
+//======================MONGO MODELS============================
+var UserModels = require('../models/user');
+var CategoryModel = require('../models/category');
+var MusicModel = require('../models/music');
+var FeedPostModel = require('../models/feed');
+var FollowersModel = require('../models/followers');
+var SubCategoryModel = require('../models/subCategory');
+var LikeModel = require('../models/like');
+var CommentModel = require('../models/comment');
+//======================MONGO MODELS============================
+//======================LOGGER==================================
+/*    flags: 'a'
+});
+var logStdout = process.stdout;
+var baseUrl = config.baseUrl;
+console.log = function () {
+    logFile.write(
+        "\n===:" + new Date() + ":\n" +
+        util.format.apply(null, arguments) +
+        '\n===\n'
+    );
+    logStdout.write(
+        "\n===:" + new Date() + ":\n" +
+        util.format.apply(null, arguments) +
+        '\n===\n'
+    );
+}
+console.error = console.log*/
+//======================LOGGER KEY==============================
+var apiService = {
+    jwtAuthVerification: (jwtData, callback) => {
+        if (jwtData.authtoken && jwtData.user_id) {
+            UserModels.authenticate(jwtData, function (auth) {
+                callback(auth);
+            })
+        }
+    },
+    signupUser: (userData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+                if (!userData.name || typeof userData.name === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide first name", "response_data": {} });
+                }
+                if (!userData.gender || typeof userData.gender === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide your gender", "response_data": {} });
+                }
+                else if (!userData.email || typeof userData.email === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide email", "response_data": {} });
+                }
+                else if (!userData.password || typeof userData.password === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide password", "response_data": {} });
+                }
+                else {
+                    nextCb(null, { "response_code": 2000 });
+                }
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 2000) {
+                    userData._id = new ObjectID;
+                    userData.authtoken = crypto.randomBytes(32).toString('hex');
+                    UserModels.registerUser(userData, function (signUpRes) {
+                        nextCb(null, signUpRes);
+                    })
+                }
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+            }
+        ],
+            function (err, content) {
+                if (err) {
+                    callback({
+                        "response_code": 5005,
+                        "response_message": "INTERNAL DB ERROR",
+                        "response_data": err
+                    })
+                }
+                if (!err) {
+                   // console.log(content);
+                    if (content.response_code === 2000) {
+                        callback({
+                            "response_code": 2000,
+                            "response_message": "You have registered successfully.",
+                            "response_data": {
+                                "authtoken": content.response_data.authtoken,
+                                "cat_selected": content.response_data.cat_selected,
+                                "profile_type": content.response_data.user_type,
+                                "profile_details": {                                    
+                                    "user_id": content.response_data._id,
+                                    "name": content.response_data.name,
+                                    "username": content.response_data.username,
+                                    "email": content.response_data.email,
+                                    "gender": content.response_data.gender,
+                                    "profile_pic": content.response_data.image_url ?content.response_data.image_url : '',
+                                    "aboutme": content.response_data.aboutme
+                                }
+                            }
+                        })
+                    }
+                    if (content.response_code === 5000) {
+                        //callback(content);
+                         callback({
+                            "response_code": 5000,
+                            "response_message": content.response_message,
+                            "response_data": {
+                                "authtoken": content.response_data.authtoken,
+                                "cat_selected": content.response_data.cat_selected,
+                                "profile_type": content.response_data.user_type,
+                                "profile_details": {                                    
+                                    "user_id": content.response_data._id,
+                                    "name": content.response_data.name,
+                                    "username": content.response_data.username,
+                                    "email": content.response_data.email,
+                                    "profile_pic": content.response_data.image_url ? content.response_data.image_url : '',
+                                    "gender": content.response_data.gender
+                                }
+                            }
+                        })
+                    }
+                    if (content.response_code === 5005) {
+                        callback(content);
+                    }
+                    if (content.response_code === 5002) {
+                        callback(content);
+                    }
+                }
+            })
+    },
+    socialSignup: (userData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+                if (!userData.name || typeof userData.name === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide first name", "response_data": {} });
+                }
+                else if (!userData.image_url || typeof userData.image_url === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide profile image", "response_data": {} });
+                }
+                else if (!userData.devicetoken || typeof userData.devicetoken === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide device token", "response_data": {} });
+                }
+                else if (!userData.social_id || typeof userData.social_id === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide social id", "response_data": {} });
+                }
+                else {
+                    nextCb(null, { "response_code": 2000 });
+                }
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                    userData._id = new ObjectID;
+                    userData.authtoken = crypto.randomBytes(32).toString('hex');
+                    userData.user_type = 'Social';
+                    UserModels.socialSignup(userData, function (socialSignupRes) {
+                        nextCb(null, socialSignupRes);
+                    })
+                }
+            }
+        ], function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                })
+            }
+            if (!err) {
+                if (content.response_code === 2000) {
+                    callback({
+                        "response_code": 2000,
+                        "response_message": "You have registered successfully.",
+                        "response_data": {
+                            "authtoken": content.response_data.authtoken,
+                            "profile_type": content.response_data.user_type,
+                            "profile_details": {                                
+                                "user_id": content.response_data._id,
+                                "name": content.response_data.name,
+                                "username": content.response_data.username,
+                                "email": content.response_data.email,
+                                "gender": content.response_data.gender,
+                                "profile_pic": content.response_data.image_url ? content.response_data.image_url : '',
+                                "aboutme": content.response_data.aboutme
+                            }
+                        }
+                    })
+                }
+                if (content.response_code === 5000) {
+                    callback({
+                        "response_code": 2000,
+                        "response_message": "User login successfully.",
+                        "response_data": {
+                            "authtoken": content.authtoken,                            
+                            "profile_type": content.response_data.user_type,
+                            "profile_details": {
+                                "user_id": content.response_data._id,
+                                "name": content.response_data.name,
+                                "username": content.response_data.username,
+                                "email": content.response_data.email,
+                                "gender": content.response_data.gender,
+                                "profile_pic": content.response_data.image_url ? content.response_data.image_url : '',
+                                "aboutme": content.response_data.aboutme
+                            }
+                        }
+                    })
+                }
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+            }
+        })
+    },    
+    login: (loginData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+                if (!loginData.email || typeof loginData.email === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide email", "response_data": {} });
+                }
+                else if (!loginData.password || typeof loginData.password === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide password", "response_data": {} });
+                }
+                else {
+                    nextCb(null, { "response_code": 2000 });
+                }
+
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                    UserModels.login(loginData, function (loginInfo) {
+                        nextCb(null, loginInfo);
+                    })
+                }
+            },
+            function (arg2, nextCb) {
+                if (arg2.response_code === 5002) {
+                    nextCb(null, arg2);
+                }
+                if(arg2.response_code === 4001){
+                    nextCb(null,arg2);
+                }
+                if(arg2.response_code === 5000){
+                    nextCb(null,arg2);
+                }
+                if (arg2.response_code === 2000) {
+                    if (arg2.profileRes) {
+                        var loginInfo = {
+                            "response_code": 2000,
+                            "response_message": "Login success.",
+                            "response_data": {
+                                "authtoken": arg2.profileRes.authtoken,
+                                "cat_selected": arg2.profileRes.cat_selected,
+                                "profile_type": arg2.profileRes.user_type,
+                                "profile_details": {                                     
+                                    "user_id": arg2.profileRes._id,
+                                    "name": arg2.profileRes.name,
+                                    "username": arg2.profileRes.username,
+                                    "email": arg2.profileRes.email,
+                                    "gender": arg2.profileRes.gender,
+                                    "profile_pic": arg2.profileRes.image_url,
+                                    "aboutme": arg2.profileRes.aboutme
+                                   
+                                }
+                            }
+                        }
+                        nextCb(null, loginInfo);
+                    }
+                }
+            }
+        ], function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                })
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000) {
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        })
+    },
+    logout: (logoutData, callback) => {
+        if (logoutData.user_id && logoutData.apptype) {
+            UserModels.logout(logoutData, function (logoutRes) {
+                callback(logoutRes);
+            })
+        }
+        else {
+            callback({
+                "response_code": 5002,
+                "response_message": " insufficient information provided",
+                "response_data": {}
+            })
+        }
+    },
+    changePassword: (changePasswordData, callback) => {
+        if (changePasswordData.user_id && changePasswordData.password && changePasswordData.new_password) {
+            UserModels.changePassword(changePasswordData, function (passwordRes) {
+                callback(passwordRes);
+            })
+        }
+        else {
+            callback({
+                "response_code": 5002,
+                "response_message": " insufficient information provided",
+                "response_data": {}
+            })
+        }
+    },
+    updateProfileData: (profileData, file, callback) => {
+       // console.log(file.profileimage);           
+        async.waterfall([
+            function (nextCb) {
+                if (!profileData.user_id || typeof profileData.user_id === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide user id", "response_data": {} });
+                }                
+                else {
+                    nextCb(null, { "response_code": 2000 });
+                }
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                    var fileData = file;
+
+                    if (fileData != null) {
+
+                        var  s3 = new AWS.S3();
+                        var pic = fileData.profileimage;
+                        var ext = pic.name.slice(pic.name.lastIndexOf('.'));
+                        var fileName = Date.now() + ext;
+                        var params = {
+                            Bucket: 'imcelebritybucket/demo/profilepic',
+                            Key: fileName,
+                            Body: pic.data,
+                            ContentType: pic.mimetype,
+                            ACL: 'public-read'
+                           };
+                           s3.upload(params, function (err, data) { 
+                                //console.log(data);
+                                console.log(data.Location);
+                                //musicData.image_url = data.Location;                              
+                                if (err) {
+                                 console.log('Profile image file error in callback');
+                                }
+                                if (data) {
+                                        profileData.image_url = data.Location;
+                                       // console.log(profileData);
+                                        UserModels.updateUserProfile(profileData, function (updateProfileRes) {
+                                            if (updateProfileRes.response_code === 2000) {
+                                                nextCb(null, updateProfileRes);
+                                            }
+                                            if (updateProfileRes.response_code === 5005) {
+                                                nextCb(null, updateProfileRes);
+                                            }
+                                            if (updateProfileRes.response_code === 5000) {
+                                                nextCb(null, updateProfileRes);
+                                            }
+                                            if (updateProfileRes.response_code === 5002) {
+                                                nextCb(null, updateProfileRes);
+                                            }
+                                        })
+                                }
+                            
+                           });                      
+
+                    }
+                    if (fileData === null) {
+
+                        UserModels.updateUserProfile(profileData, function (updateProfileRes) {
+                           // console.log(updateProfileRes);
+                            if (updateProfileRes.response_code === 2000) {
+                                nextCb(null, updateProfileRes);
+                            }
+                            if (updateProfileRes.response_code === 5005) {
+                                nextCb(null, updateProfileRes);
+                            }
+                             if (updateProfileRes.response_code === 5000) {
+                                nextCb(null, updateProfileRes);
+                            }
+                            if (updateProfileRes.response_code === 5002) {
+                                nextCb(null, updateProfileRes);
+                            }
+                        })
+                    }
+                }
+            }, function (arg2, nextCb) {
+                if (arg2.response_code === 5002) {
+                    nextCb(null, arg2);
+                }
+                if (arg2.response_code === 5005) {
+                    nextCb(null, arg2);
+                } 
+                if (arg2.response_code === 5000) {
+                    nextCb(null, arg2);
+                }        
+                if (arg2.response_code === 2000) {
+                    // if(arg2.response_data.user_type=='Social')
+                    // {
+                    //      config.liveUrl='';
+                    //      config.profilepicPath='';
+                    // }
+                    var profileData = {
+                        "response_code": 2000,
+                        "response_message": "Profile updated successfully.",
+                        "response_data": {
+                            "authtoken": arg2.response_data.authtoken,
+                            "profile_type": arg2.response_data.user_type,
+                            "profile_details": {                                
+                                "user_id": arg2.response_data._id,
+                                "name": arg2.response_data.name,
+                                "username": arg2.response_data.username,
+                                "email": arg2.response_data.email,
+                                "gender": arg2.response_data.gender,
+                                "profile_pic":arg2.response_data.image_url,                                
+                                "aboutme": arg2.response_data.aboutme,
+                            }
+                        }
+                    }
+                    nextCb(null, profileData);
+                }
+            }
+        ], function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                })
+            }
+            if (content.response_code === 5002) {
+                callback(content);
+            }
+            if (content.response_code === 5000) {
+                callback(content);
+            }
+            if (content.response_code === 5005) {
+                callback(content);
+            }
+            if (content.response_code === 2000) {
+                //console.log(content);
+                callback(content);
+            }
+            
+        })
+    },
+    updateDeviceToken: (deviceData, callback) => {
+        if (deviceData.devicetoken && deviceData.user_id) {
+            UserModels.updateDeviceToken(deviceData, function (deviceDataRes) {
+                callback(deviceDataRes);
+            })
+        }
+        else {
+            callback({
+                "response_code": 5002,
+                "response_message": " insufficient information provided",
+                "response_data": {}
+            })
+        }
+    },    
+    forgotPassword: (forgotPasswordData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+                if (!forgotPasswordData.email || typeof forgotPasswordData.email === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide user email", "response_data": {} });
+                }
+                else if (!forgotPasswordData.apptype || typeof forgotPasswordData.apptype === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide apptype ", "response_data": {} });
+                }
+                else {
+                    nextCb(null, { "response_code": 2000, });
+                }
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                    UserModels.verifyUser(forgotPasswordData, function (userData) {
+                        nextCb(null, userData);
+                    })
+                }
+            },
+            function (arg2, nextCb) {
+                if (arg2.response_code === 5002) {
+                    nextCb(null, arg2);
+                }
+                if (arg2.response_code === 5005) {
+                    nextCb(null, arg2);
+                }
+                if (arg2.response_code === 2000) {
+                    var random = Math.random().toString(36).replace(/[^a-z]+/g, '').substr(0, 6);
+                    var sh1Pass = sha1(random);
+                    console.log(sh1Pass);
+                    UserModels.savePassword(forgotPasswordData, sh1Pass, function (userData) {
+                        userData.random = random;
+                        nextCb(null, userData);
+                    })
+                }
+            }
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": {}
+                })
+            }
+            if (!err) {
+                if (content.response_code === 2000) {
+                    mailProperty('forgotPasswordMail')(forgotPasswordData.email, {
+                        OTP: content.random,
+                        email: forgotPasswordData.email
+                    }).send();
+                    callback({
+                        "response_code": 2000,
+                        "response_message": "New password will be sent to your mail.",
+                        "response_data": {}
+                    })
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+            }
+        })
+    },
+    viewUserProfile: (userData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+                if (!userData.user_id || typeof userData.user_id === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "please provide user ID", "response_data": {} });
+                }                 
+                else {
+                    nextCb(null, { "response_code": 2000 });
+                }
+
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                    UserModels.getUserProfile(userData, function (userInfo) {
+                        //console.log(userInfo);
+                        //nextCb(null, userInfo);
+                        if (userInfo) {
+                                    nextCb(null,userInfo)
+                        }
+                        else{
+                                    nextCb(null,{ 
+                                        "response_code": 5002,
+                                        "response_message": "User not found",
+                                        "response_data": {} 
+                                      });
+
+                            }
+                    })
+                }
+            }           
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                })
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                
+                if (content.response_code === 2000) {
+                    callback(content);
+                }
+               
+            }
+        })
+    },
+    categoryList: (reqData, callback) => {
+        //console.log(reqData);
+        async.waterfall([
+            function (nextCb) { 
+                    if (!reqData.type || typeof reqData.type === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any type Songs/Dances", "response_data": {} });
+                    }
+                    else  nextCb(null, { "response_code": 2000 });                
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                  //console.log(reqData);
+                  //if(reqData.p_id==="") reqData.p_id= false;
+                    CategoryModel.getCategoriesByType(reqData, function (catList) {
+                        //console.log(catList);
+                        nextCb(null, catList);
+                    });
+                }
+            },
+            function (arg2, nextCb) {
+                //console.log(arg2);
+                if (arg2.response_code === 5002) {
+                    nextCb(null, arg2);
+                }
+                if(arg2.response_code === 4001){
+                    nextCb(null,arg2);
+                }
+                if(arg2.response_code === 5000){
+                    nextCb(null,arg2);
+                }
+                if (arg2.response_code === 2000) {
+                    if (arg2.categoryRes.length>0) {                         
+                            var allcat = {
+                                    "response_code": 2000,
+                                    "success":true,
+                                    "message": "Success",
+                                    "response_data": arg2.categoryRes
+                                }
+                            nextCb(null, allcat);
+                        
+                    }else{
+                         nextCb(null, {
+                                        "response_code": 5002,
+                                        "success":false,
+                                        "message": "No categories found",
+                                        "response_data":[] 
+                                    });
+                    }
+                }
+            }
+        ],function (err, content) {
+                if (err) {
+                    callback({
+                        "response_code": 5005,
+                        "response_message": "INTERNAL DB ERROR",
+                        "response_data": err
+                    });
+                }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000) {                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        });  
+    },
+    subcategoryList: (reqData, callback) => {
+        //console.log(reqData);
+        async.waterfall([
+            function (nextCb) { 
+                    if (!reqData.pcat_id || typeof reqData.pcat_id === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide parent cat ID", "response_data": {} });
+                    }
+                    else  nextCb(null, { "response_code": 2000 });                
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                  //console.log(reqData);
+                  //if(reqData.p_id==="") reqData.p_id= false;
+                    SubCategoryModel.getCategoriesByPid(reqData, function (catList) {
+                        console.log(catList);
+                        nextCb(null, catList);
+                    });
+                }
+            },
+            function (arg2, nextCb) {
+                //console.log(arg2);
+                if (arg2.response_code === 5002) {
+                    nextCb(null, arg2);
+                }
+                if(arg2.response_code === 4001){
+                    nextCb(null,arg2);
+                }
+                if(arg2.response_code === 5000){
+                    nextCb(null,arg2);
+                }
+                if (arg2.response_code === 2000) {
+                    if (arg2.categoryRes.length>0) {
+                         console.log(arg2.categoryRes);
+                            var allcat = {
+                                    "response_code": 2000,
+                                    "success":true,
+                                    "message": "Success",
+                                    "response_data": arg2.categoryRes
+                                }
+                            nextCb(null, allcat);
+                        
+                    }else{
+                         nextCb(null, {
+                                        "response_code": 5002,
+                                        "success":false,
+                                        "message": "No categories found",
+                                        "response_data":[] 
+                                    });
+                    }
+                }
+            }
+        ],function (err, content) {
+                if (err) {
+                    callback({
+                        "response_code": 5005,
+                        "response_message": "INTERNAL DB ERROR",
+                        "response_data": err
+                    });
+                }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000) {                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        });  
+    },
+    getKaraokeWithLyrics: (reqData, callback) => {
+        async.waterfall([
+            function (nextCb) { 
+            if (!reqData.cat_id || typeof reqData.cat_id === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any Category ID", "response_data": {} });
+                    }                
+                 else   nextCb(null, { "response_code": 2000 });                
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);
+                    MusicModel.getAllMusic(reqData, function (musicList) {
+                        nextCb(null, musicList);
+                    });
+                }
+            },
+            function (arg2, nextCb) {
+                //console.log(arg2);
+                if (arg2.response_code === 5002) {
+                    nextCb(null, arg2);
+                }
+                if(arg2.response_code === 4001){
+                    nextCb(null,arg2);
+                }
+                if(arg2.response_code === 5000){
+                    nextCb(null,arg2);
+                }
+                if (arg2.response_code === 2000) {
+                    if (arg2.musicRes) {
+                        //console.log(arg2.musicRes);                   
+
+                        var allmusics = {
+                                        "response_code": 2000,
+                                        "success":true,
+                                        "message": "Success",
+                                        "total_records":arg2.total_records,
+                                        "response_data": arg2.musicRes
+                                    }
+                        nextCb(null, allmusics);
+                    }
+                }
+            }
+        ],function (err, content) {
+                if (err) {
+                    callback({
+                        "response_code": 5005,
+                        "response_message": "INTERNAL DB ERROR",
+                        "response_data": err
+                    });
+                }
+                if (!err) {
+                    if (content.response_code === 5005) {
+                        callback(content);
+                    }
+                    if (content.response_code === 5002) {
+                        callback(content);
+                    }
+                    if(content.response_code === 4001){
+                        callback(content);
+                    }
+                    if (content.response_code === 2000) {                   
+                        callback(content);
+                    }
+                    if(content.response_code === 5000){
+                        callback(content);
+                    }
+                }
+            });  
+    },
+    postSongsAndDances: (reqData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+            if(reqData.post_id || typeof reqData.post_id != undefined)
+            {
+                if (!reqData.status || typeof reqData.status === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "Please provide any status Published/Draft", "response_data": {} });
+                } 
+                else nextCb(null, { "response_code": 2000 });
+
+            }else{
+                if (!reqData.singing_mode || typeof reqData.singing_mode === undefined) {
+                            nextCb(null, { "response_code": 5002, "response_message": "Please provide any singing mode Freestyle/WithSongs", "response_data": {} });
+                        } 
+                if (!reqData.artist_name || typeof reqData.artist_name === undefined) {
+                            nextCb(null, { "response_code": 5002, "response_message": "Please provide artist name", "response_data": {} });
+                        }
+                if (!reqData.cat_type || typeof reqData.cat_type === undefined) {
+                            nextCb(null, { "response_code": 5002, "response_message": "Please provide cat type Songs/Dances ", "response_data": {} });
+                        }
+                if (!reqData.user_id || typeof reqData.user_id === undefined) {
+                            nextCb(null, { "response_code": 5002, "response_message": "Please provide user id", "response_data": {} });
+                        }
+                if (!reqData.cat_id || typeof reqData.cat_id === undefined) {
+                            nextCb(null, { "response_code": 5002, "response_message": "Please provide any Category ID", "response_data": {} });
+                        }       
+                if (!reqData.file_url || typeof reqData.file_url === undefined) {
+                            nextCb(null, { "response_code": 5002, "response_message": "Please provide file url", "response_data": {} });
+                        }
+                else   nextCb(null, { "response_code": 2000 });  
+            }
+
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);
+                 if(reqData.post_id && reqData.status)
+                {
+                    reqData._id =reqData.post_id;
+                    FeedPostModel.updatePostStatus(reqData, function (feedRes) {
+                       // console.log(feedRes);
+                        nextCb(null, feedRes);
+                    });
+
+                }else{
+                        reqData._id = new ObjectID;
+                        FeedPostModel.insertSong(reqData, function (feedRes) {
+                           // console.log(feedRes);
+                            nextCb(null, feedRes);
+                        });
+                    }
+
+                }
+            }
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000){                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        });  
+    },
+    getUserPost: (userData, callback) => {
+        async.waterfall([
+            function (nextCb) { 
+            if (!userData.user_id || typeof userData.user_id === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any user ID", "response_data": {} });
+                    }                
+                 else   nextCb(null, { "response_code": 2000 });                
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);
+                    FeedPostModel.getAllPostByUser(userData, function (postRes) {
+                        nextCb(null, postRes);
+                    });
+                }
+            },
+            function (arg2, nextCb) {
+                //console.log(arg2);
+                if (arg2.response_code === 5002) {
+                    nextCb(null, arg2);
+                }
+                if(arg2.response_code === 4001){
+                    nextCb(null,arg2);
+                }
+                if(arg2.response_code === 5000){
+                    nextCb(null,arg2);
+                }
+                if (arg2.response_code === 2000) {
+                    if (arg2.feedRes) {
+                       
+                        var allPost = {
+                                        "response_code": 2000,
+                                        "success":true,
+                                        "message": "Success",
+                                        "total_records":arg2.total_records,
+                                        "response_data": arg2.feedRes
+                                    }
+                        nextCb(null, allPost);
+                    }
+                }
+            }
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000) {                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        }); 
+    },
+    setFollowers: (reqData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+                 
+                if (!reqData.userId || typeof reqData.userId === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "Please provide userId", "response_data": {} });
+                }else if (!reqData.friendId || typeof reqData.friendId === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "Please provide friendId", "response_data": {} });
+                }  
+                else nextCb(null, { "response_code": 2000 });
+
+                 
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);           
+                         
+                        FollowersModel.insertFollowers(reqData, function (userRes) {
+                            //console.log(userRes);
+                            nextCb(null, userRes);
+                        });
+                   
+
+                }
+            }
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000){                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        });  
+    },
+    unFollowUser: (reqData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+                if (!reqData.userId || typeof reqData.userId === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "Please provide userId", "response_data": {} });
+                }else if (!reqData.friendId || typeof reqData.friendId === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "Please provide friendId", "response_data": {} });
+                }  
+                else nextCb(null, { "response_code": 2000 });
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);           
+                         
+                        FollowersModel.updateFollowers(reqData, function (userRes) {
+                            //console.log(userRes);
+                            nextCb(null, userRes);
+                        });
+                }
+            }
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000){                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        });  
+    },
+    getFollowers: (reqData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+                if (!reqData.userId || typeof reqData.userId === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "Please provide userId", "response_data": {} });
+                }
+                if (!reqData.page_count || typeof reqData.page_count === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "Please provide page_count", "response_data": {} });
+                }  
+                else nextCb(null, { "response_code": 2000 });
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);           
+                         
+                    FollowersModel.getFollowerUserList(reqData, function (userRes) {
+                        //console.log(userRes);
+                        nextCb(null, userRes);
+                    });
+                }
+            },
+            function (arg2, nextCb) {
+                if (arg2.response_code === 5002) {
+                    nextCb(null, arg2);
+                }
+                if (arg2.response_code === 5005) {
+                    nextCb(null, arg2);
+                }
+                if (arg2.response_code === 2000) {
+                     console.log(arg2);
+                    let reqobj={page_count:reqData.page_count, userIdArr:arg2.response_data} 
+                    UserModels.getUserList(reqobj, function (userRes) {
+                            console.log(userRes);
+                            nextCb(null, userRes);
+                    });
+                   
+
+                }
+            }
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000){                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        });  
+    },
+    getFollowing: (reqData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+                if (!reqData.userId || typeof reqData.userId === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "Please provide userId", "response_data": {} });
+                } 
+                else nextCb(null, { "response_code": 2000 });
+
+                 
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);           
+                         
+                        FollowersModel.getFollowerUserList(reqData, function (userRes) {
+                            //console.log(userRes);
+                            nextCb(null, userRes);
+                        });
+                   
+
+                }
+            }
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000){                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        });  
+    },
+    globalSearch: (reqData, callback) => {
+        async.waterfall([
+            function (nextCb) {
+                 
+                if (!reqData.search_keyword || typeof reqData.userIsearch_keywordd === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "Please provide search keyword", "response_data": {} });
+                }else if (!reqData.type || typeof reqData.type === undefined) {
+                    nextCb(null, { "response_code": 5002, "response_message": "Please provide type of search", "response_data": {} });
+                }  
+                else nextCb(null, { "response_code": 2000 });
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);           
+                        if(reqData.type=="PEOPLE")
+                        {
+
+                             UserModels.searchUser(reqData, function (searchRes) {
+                               // console.log(searchRes);
+                                nextCb(null, searchRes);
+                            });
+
+                        }else{
+                            MusicModel.searchMusic(reqData, function (searchRes) {
+                               // console.log(searchRes);
+                                nextCb(null, searchRes);
+                            });
+                        }
+                   
+
+                }
+            }
+            
+        ],function (err, content) {
+                    if (err) {
+                        callback({
+                            "response_code": 5005,
+                            "response_message": "INTERNAL DB ERROR",
+                            "response_data": err
+                        });
+                    }
+                    if (!err) {
+                        if (content.response_code === 5005) {
+                            callback(content);
+                        }
+                        if (content.response_code === 5002) {
+                            callback(content);
+                        }
+                        if(content.response_code === 4001){
+                            callback(content);
+                        }
+                        if (content.response_code === 2000){                   
+                            callback(content);
+                        }
+                        if(content.response_code === 5000){
+                            callback(content);
+                        }
+                    }
+                });  
+    },
+    followingFeed: (userData, callback) => {
+        async.waterfall([
+            function (nextCb) { 
+            if (!userData.type || typeof userData.type === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any category of post", "response_data": {} });
+                }
+            if (!userData.userId || typeof userData.userId === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any userId", "response_data": {} });
+                }                
+                 else   nextCb(null, { "response_code": 2000 });                
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);
+                    FeedPostModel.getFollowersPost(userData, function (postRes) {
+                        nextCb(null, postRes);
+                    });
+                }
+            } 
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000) {                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        }); 
+    },
+    likePost: (userData, callback) => {
+        //console.log('bbbdbasdasd')
+        //console.log(userData);
+        async.waterfall([
+            function (nextCb) { 
+             // if (!userData.likeState ||isNaN(userData.likeState )) {
+             //             nextCb(null, { "response_code": 5002, "response_message": "Please provide like state", "response_data": {} });
+             //     }
+            if (!userData.userId || typeof userData.userId === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any userId", "response_data": {} });
+                }
+            if (!userData.postId || typeof userData.postId === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any postId", "response_data": {} });
+                }                
+            else {  nextCb(null, { "response_code": 2000 }); }                  
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);
+                    LikeModel.feedLike(userData, function (postRes) {
+                        //console.log(postRes);
+                        nextCb(null, postRes);
+                    });
+                }
+            }, 
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000) {                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        }); 
+    },
+    commentPost: (userData, callback) => {
+        //console.log(userData);
+        async.waterfall([
+            function (nextCb) { 
+            if (!userData.comment || typeof userData.comment === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please enter comment", "response_data": {} });
+                }
+            if (!userData.userId || typeof userData.userId === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any userId", "response_data": {} });
+                }
+             if (!userData.postId || typeof userData.postId === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any postId", "response_data": {} });
+                }                
+                 else   nextCb(null, { "response_code": 2000 });                
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);
+                    CommentModel.feedComment(userData, function (postRes) {
+                        //console.log(postRes);
+                        nextCb(null, postRes);
+                    });
+                }
+            }, 
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000) {                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        }); 
+    },
+    sharePost: (userData, callback) => {
+        //console.log(userData);
+        async.waterfall([
+            function (nextCb) {            
+            if (!userData.userId || typeof userData.userId === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any userId", "response_data": {} });
+                }
+            if (!userData.postId || typeof userData.postId === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any postId", "response_data": {} });
+                }                
+            else   nextCb(null, { "response_code": 2000 });                
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);
+                    FeedPostModel.sharePost(userData, function (postRes) {
+                        //console.log(postRes);
+                        nextCb(null, postRes);
+                    });
+                }
+            }, 
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000) {                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        }); 
+    },
+    newFeed: (userData, callback) => {
+        async.waterfall([
+            function (nextCb) { 
+            if (!userData.type || typeof userData.type === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide any category of post", "response_data": {} });
+                }
+            if (!userData.page || typeof userData.page === undefined) {
+                        nextCb(null, { "response_code": 5002, "response_message": "Please provide pageNo", "response_data": {} });
+                }                
+                 else   nextCb(null, { "response_code": 2000 });                
+            },
+            function (arg1, nextCb) {
+                if (arg1.response_code === 5002) {
+                    nextCb(null, arg1);
+                }
+                if (arg1.response_code === 2000) {
+                 // console.log(reqData);
+                    FeedPostModel.getNewPost(userData, function (postRes) {
+                        nextCb(null, postRes);
+                    });
+                }
+            } 
+        ],
+        function (err, content) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": err
+                });
+            }
+            if (!err) {
+                if (content.response_code === 5005) {
+                    callback(content);
+                }
+                if (content.response_code === 5002) {
+                    callback(content);
+                }
+                if(content.response_code === 4001){
+                    callback(content);
+                }
+                if (content.response_code === 2000) {                   
+                    callback(content);
+                }
+                if(content.response_code === 5000){
+                    callback(content);
+                }
+            }
+        }); 
+    },
+
+};
+module.exports = apiService;

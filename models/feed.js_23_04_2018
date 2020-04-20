@@ -1,0 +1,605 @@
+var mongoose = require("mongoose");
+var mongo = require('mongodb');
+var mongoPaginate = require("mongoose-pagination");
+var FollowersModel = require('../models/followers');
+var ObjectID = mongo.ObjectID;
+var mongooseAggregatePaginate = require('mongoose-aggregate-paginate');
+
+
+// Export your module
+var FeedModel = mongoose.model("SongsFeed", function () {
+
+    var s = new mongoose.Schema({
+        _id: {
+            type: String,
+            required: true
+        },
+        description: {
+            type: String,
+            default: ''            
+        },
+        location_name: {
+            type: String,
+            default: ''            
+        },
+        loc:[{lat:Number, long:Number}],        
+        singing_mode: {
+            type: String,
+            enum: ['Freestyle', 'WithSongs'],
+            default: 'Freestyle'   
+        },
+        songs_name: {
+            type: String,
+            required: true
+        },
+        artist_name: {
+            type: String,
+            required: true            
+        },
+        effects: {
+            type: String,
+            default: ''
+        },
+        user_id: {
+            type: String,
+            required: true
+            
+        },
+        cat_type: {
+            type: String,
+            enum: ['Sing', 'Dance'],
+            default: 'Sing'         
+        },
+        cat_id: {
+            type: String,
+            required: true
+        },
+        karaoke_id: {
+            type: String                        
+        },        
+        image_url: {
+            type: String,
+            default: ''
+        },        
+        file_url: {
+            type: String,
+            required: true
+        },
+        track_length: {
+            type: String,
+            required: true
+        },
+        is_shared: {
+            type: Boolean,
+            default: false
+        },
+        posted_userId: {
+            type: String,
+            default: ''
+        },
+        shared_postId: {
+            type: String,
+            default: ''
+        },
+        image_url: {
+            type: String,
+            default: ''
+        }, 
+        status: {
+            type: String,
+            enum: ['Published', 'Draft'],
+            default: 'Draft'         
+        },      
+        
+    }, {
+            timestamps: true
+        });
+s.plugin(mongooseAggregatePaginate);    
+s.statics.insertSong = function (songsData, callback) {
+        // console.log(songsData);
+         // this.getMusicByName({sname:songsData.songs_name,artist:songsData.artist_name}, function (res) {
+             
+         //                if (res === null) {                     
+            new FeedModel({
+                            _id: songsData._id,
+                            description:songsData.description,
+                            location_name:songsData.location_name,
+                            loc: [{ long: songsData.long, lat: songsData.lat}],
+                            singing_mode: songsData.singing_mode,
+                            songs_name: songsData.songs_name,
+                            artist_name: songsData.artist_name,
+                            effects: songsData.effects,
+                            user_id: songsData.user_id,
+                            cat_type: songsData.cat_type,
+                            cat_id: songsData.cat_id,
+                            karaoke_id: songsData.karaoke_id,
+                            image_url: songsData.image_url,
+                            file_url: songsData.file_url,
+                            track_length: songsData.track_length,
+                            status: songsData.status
+                        }).save(function (err, response_data) {
+                if (!err) {
+                    var msg='';
+                    if(response_data.status==="Draft")  msg="saved successfully";
+                    else msg="posted successfully";
+                    console.log("[Songs posted successfully]");
+                    callback({ 
+                        "response_code": 2000,
+                        "response_message": response_data.cat_type=="Sing"?"Song "+ msg : response_data.cat_type + " "+ msg,
+                        "response_data": response_data
+                         });
+                } else {
+                    console.log(err);
+                    callback({
+                        "response_code": 5005,
+                        "response_message": "INTERNAL DB ERROR",
+                        "response_data": {}
+                    })
+                }
+            })
+              //       }else{
+                           
+              //               console.log("[Songs already exist]");
+              //           callback({
+              //               "response_code": 5000,
+              //               "response_message":"Songs already exist",
+              //               "response_data":res
+
+              //           })
+
+              //       }
+              // } ) 
+}
+s.statics.updatePostStatus = function (postData, callback) {
+            
+            FeedModel.update({
+                _id: postData._id
+            },{
+                    $set: {
+                        status: postData.status,                         
+                    }
+                }).exec(function (err, u) {
+                    if (err) {
+                        callback({
+                            "response_code": 5005,
+                            "response_message": "INTERNAL DB ERROR",
+                            "response_data": {}
+                        })
+                    }
+                    if (!err) {
+                        if (u.n === 1 && u.nModified === 1) {
+                            FeedModel.getPostDetails(postData._id, function (songsRes) {
+                                if (songsRes) {
+                                    callback({                                        
+                                        "response_code": 2000,                                        
+                                        "response_message": songsRes.cat_type=="Sing"?"Song posted successfully": songsRes.cat_type+" posted successfully",
+                                        "response_data": songsRes
+                                    })
+                                }
+                            })
+                        }
+
+
+                    }
+                })
+}
+s.statics.getMusicByName = function (req, callback) {
+    FeedModel.findOne({
+        songs_name: req.sname,
+        artist_name:req.artist 
+    },
+        function (err, res) {
+            if (err)
+                console.log(err);
+            if (!err)
+                callback(res);
+        })
+}
+s.statics.getAllPostByUser = function (req, callback) {
+    //console.log(req);
+    var prams={}
+    if(req.user_id)
+    {
+        prams.user_id=req.user_id
+    }
+    if(req.status)
+    {
+        prams.status=req.status
+    }
+    FeedModel.find(prams,
+        function (err, res) {
+            if (err){
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": {}
+                })
+            }
+           
+           
+        }).paginate(req.page, 10, function(err, res, total) {
+           // console.log('total: ', total, 'docs: ', res)
+             if (res)
+            {
+                //console.log(res);
+                if(res.length===0)
+                {
+                   callback({
+                            "response_code":5002,
+                            "response_message":"No post found",
+                            "response_data": []
+                        }) 
+                }
+               else 
+               {
+                callback({ 
+                    "response_code": 2000,
+                    "total_records":total,
+                    "feedRes": res 
+                    });
+                }
+            } 
+
+
+
+          });
+}
+s.statics.countPost = function(userId , callback){
+        FeedModel.find({ 
+            user_id:userId,
+            status:'Published'
+        }).count().exec(function (err , countPost){
+            if(err){
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": {}
+                })
+            }
+            if(!err){
+                callback({
+                    "response_code": 2000,
+                    "response_message": "Post count",
+                    "response_data": countPost
+                })
+            }
+        });
+}
+s.statics.getPostDetails = function (post_id, callback) {
+    if (post_id) {
+        FeedModel.findOne({
+            _id: post_id
+        }, function (err, u) {
+            if (err) {
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": {}
+                })
+            }
+            if (!err) {              
+                
+                callback(u);
+            }
+        })
+    }
+}
+s.statics.getFollowersPost = function (req, callback) {
+    var allUser=[];
+    FollowersModel.getFollowingUserList(req, function(userList){
+       // console.log(userList);
+
+        if(userList.response_code===2000)
+        {
+            allUser=userList.response_data;
+            var aggregate=FeedModel.aggregate([
+            {
+                $match:{
+                    $and:[
+                            {cat_type: req.type},
+                            {user_id:{ $in:allUser }},
+                            {status: "Published"}
+                        ]
+                }
+            },
+            {
+                $sort:{createdAt : -1}
+            },
+            {
+              $lookup:
+                {
+                  from: "users",
+                  localField: "user_id",
+                  foreignField: "_id",
+                  as: "userinfo"
+                }
+           },
+           {
+              $lookup:
+                {
+                  from: "likes",
+                  localField: "_id",
+                  foreignField: "feed_id",
+                  as: "likepost"
+                }
+           },
+           {
+              $lookup:
+                {
+                  from: "comments",
+                  localField: "_id",
+                  foreignField: "feed_id",
+                  as: "commentpost"
+                }
+           },
+           {
+              $lookup:
+                {
+                  from: "songsfeeds",
+                  localField: "_id",
+                  foreignField: "shared_postId",
+                  as: "sharepost"
+                }
+           },
+           {
+              $lookup:
+                {
+                  from: "users",
+                  localField: "posted_userId",
+                  foreignField: "_id",
+                  as: "originalPostedUser"
+                }
+           },
+           {
+                $project:{
+                    is_shared:1,
+                    songs_name:1,
+                    singing_mode:1,
+                    location_name:1,
+                    description:1,
+                    file_url:1,
+                    track_length:1,
+                    image_url:1,
+                    user_id:1,
+                    posted_userId:1,
+                    username1:{ "$arrayElemAt": ["$userinfo.username", 0 ] },
+                    user1_profile_pic:{ "$arrayElemAt": ["$userinfo.image_url", 0 ] },                
+                    username2:{ "$arrayElemAt": ["$originalPostedUser.username", 0 ] },                    
+                    like_count:{$size:"$likepost"},
+                    comment_count:{$size:"$commentpost"},
+                    share_count:{$size:"$sharepost"}
+
+
+               }
+            }
+            ]) //start pagination
+            var options = { page : req.page, limit : 10};
+            FeedModel.aggregatePaginate(aggregate, options, function(err, results, pageCount, count) {
+              if(err) 
+              {
+                console.err(err)
+              }
+              else
+              { 
+               // console.log(results.length);
+                 if(results.length == 0){
+                    callback({
+                        "response_code":5002,
+                        "total_record":0,
+                        "response_message":"No post to show",
+                        "response_data": []
+                        
+                    })
+                 }
+                 else{                    
+                    callback({
+                        "response_code": 2000, 
+                        "response_message": "Feed list.",
+                        "total_record":count,
+                        "response_data": results
+                    })
+                 }
+                 
+              }
+            }) //End pagination
+        }else{
+            allUser.push(req.userId);
+        }
+        //callback(userList);
+    })
+}
+s.statics.sharePost = function (postData, callback) {
+    this.getPostDetails(postData.postId, function (songsData) {
+     //console.log(songsData);
+        if (songsData !== null) { 
+            let params={
+                            _id: new ObjectID,
+                            description:songsData.description?songsData.description:'',
+                            location_name:songsData.location_name?songsData.location_name:'',
+                            loc: songsData.loc.length>=1?[{ long: songsData.loc[0].long, lat: songsData.loc[0].lat}]:[],
+                            singing_mode: songsData.singing_mode,
+                            songs_name: songsData.songs_name,
+                            artist_name: songsData.artist_name,
+                            effects: songsData.effects,
+                            user_id: postData.userId,
+                            cat_type: songsData.cat_type,
+                            cat_id: songsData.cat_id,
+                            karaoke_id: songsData.karaoke_id,
+                            image_url: songsData.image_url,
+                            file_url: songsData.file_url,
+                            track_length: songsData.track_length,
+                            status: songsData.status,
+                            is_shared:true,
+                            shared_postId: songsData._id,
+                            posted_userId: songsData.user_id
+                        };
+                        //console.log(params)                    
+            new FeedModel(params).save(function (err, response_data) {
+                if (!err) {
+                    var msg='';
+                    if(response_data.status==="Draft")  msg="post saved successfully";
+                    else msg="shared successfully";
+                    console.log("[Songs posted successfully]");
+                    callback({ 
+                        "response_code": 2000,
+                        "response_message": response_data.cat_type=="Sing"?"Song "+ msg : response_data.cat_type + " "+ msg,
+                        "response_data": response_data
+                         });
+                } else {
+                    console.log(err);
+                    callback({
+                        "response_code": 5005,
+                        "response_message": "INTERNAL DB ERROR",
+                        "response_data": {}
+                    })
+                }
+            })
+        }else{
+               
+            console.log("[Post does't exist]");
+            callback({
+                "response_code": 5000,
+                "response_message":"Post does't exist",
+                "response_data":res
+            })
+        }
+    }) 
+}
+s.statics.getNewPost = function (req, callback) {
+    var aggregate=FeedModel.aggregate([
+    {
+        $match:{
+            $and:[
+                    {cat_type: req.type},
+                    {status: "Published"}
+                ]
+        }
+    },
+    {
+        $sort:{createdAt : -1}
+    },
+    {
+      $lookup:
+        {
+          from: "users",
+          localField: "user_id",
+          foreignField: "_id",
+          as: "userinfo"
+        }
+   },
+   {
+      $lookup:
+        {
+          from: "likes",
+          localField: "_id",
+          foreignField: "feed_id",
+          as: "likepost"
+        }
+   },
+   {
+      $lookup:
+        {
+          from: "comments",
+          localField: "_id",
+          foreignField: "feed_id",
+          as: "commentpost"
+        }
+   },
+   {
+      $lookup:
+        {
+          from: "songsfeeds",
+          localField: "_id",
+          foreignField: "shared_postId",
+          as: "sharepost"
+        }
+   },
+   {
+      $lookup:
+        {
+          from: "users",
+          localField: "posted_userId",
+          foreignField: "_id",
+          as: "originalPostedUser"
+        }
+   },
+   {
+        $project:{
+            is_shared:1,
+            songs_name:1,
+            singing_mode:1,
+            location_name:1,
+            description:1,
+            file_url:1,
+            track_length:1,
+            image_url:1,
+            user_id:1,
+            posted_userId:1,
+            username1:{ "$arrayElemAt": ["$userinfo.username", 0 ] },
+            user1_profile_pic:{ "$arrayElemAt": ["$userinfo.image_url", 0 ] },                
+            username2:{ "$arrayElemAt": ["$originalPostedUser.username", 0 ] },
+           // user2_profile_pic:{ "$arrayElemAt": ["$originalPostedUser.image_url", 0 ] },
+            like_count:{$size:"$likepost"},
+            comment_count:{$size:"$commentpost"},
+            share_count:{$size:"$sharepost"}
+
+
+       }
+    }
+    ]) //start pagination
+    var options = { page : req.page, limit : 10};
+    FeedModel.aggregatePaginate(aggregate, options, function(err, results, pageCount, count) {
+      if(err) 
+      {
+        console.err(err)
+      }
+      else
+      { 
+        console.log(results.length);
+         if(results.length == 0){
+            callback({
+                "response_code":5002,
+                "total_record":0,
+                "response_message":"No post to show",
+                "response_data": []
+                
+            })
+         }
+         else{                    
+            callback({
+                "response_code": 2000, 
+                "response_message": "New Feed list.",
+                "total_record":count,
+                "response_data": results
+            })
+         }
+         
+      }
+    }) //End pagination
+}
+s.statics.deletePost = function(userId , callback){
+        FeedModel.deleteOne({ 
+            _id:userId           
+        }).exec(function (err , countPost){
+            if(err){
+                callback({
+                    "response_code": 5005,
+                    "response_message": "INTERNAL DB ERROR",
+                    "response_data": {}
+                })
+            }
+            if(!err){
+                callback({
+                    "response_code": 2000,
+                    "response_message": "Post count",
+                    "response_data": countPost
+                })
+            }
+        });
+}
+
+return s;
+
+}());
+
+module.exports = FeedModel;
